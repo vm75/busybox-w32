@@ -354,7 +354,6 @@ struct tm *gmtime_r(const time_t *timep, struct tm *result);
 struct tm *localtime_r(const time_t *timep, struct tm *result);
 char *strptime(const char *s, const char *format, struct tm *tm);
 size_t mingw_strftime(char *buf, size_t max, const char *format, const struct tm *tm);
-int stime(time_t *t);
 
 #define strftime mingw_strftime
 
@@ -406,7 +405,7 @@ int kill(pid_t pid, int sig);
 int link(const char *oldpath, const char *newpath);
 NOIMPL(mknod,const char *name UNUSED_PARAM, mode_t mode UNUSED_PARAM, dev_t device UNUSED_PARAM);
 /* order of devices must match that in get_dev_type */
-enum {DEV_NULL, DEV_ZERO, DEV_URANDOM, NOT_DEVICE};
+enum {DEV_NULL, DEV_ZERO, DEV_URANDOM, NOT_DEVICE = -1};
 int get_dev_type(const char *filename);
 void update_dev_fd(int dev, int fd);
 int mingw_open (const char *filename, int oflags, ...);
@@ -514,7 +513,7 @@ static inline char *auto_win32_extension(const char *p)
 	return s ? auto_string(s) : NULL;
 }
 
-void bs_to_slash(char *p) FAST_FUNC;
+char *bs_to_slash(char *p) FAST_FUNC;
 void slash_to_bs(char *p) FAST_FUNC;
 size_t remove_cr(char *p, size_t len) FAST_FUNC;
 

@@ -156,16 +156,8 @@ static int rand_fd = -1;
  */
 int get_dev_type(const char *filename)
 {
-	int i;
-	const char *devname[NOT_DEVICE] = { "null", "zero", "urandom" };
-
-	if (filename && !strncmp(filename, "/dev/", 5)) {
-		for (i=0; i<NOT_DEVICE; ++i ) {
-			if (!strcmp(filename+5, devname[i])) {
-				return i;
-			}
-		}
-	}
+	if (filename && !strncmp(filename, "/dev/", 5))
+		return index_in_strings("null\0zero\0urandom\0", filename+5);
 
 	return NOT_DEVICE;
 }
@@ -188,7 +180,7 @@ int mingw_open (const char *filename, int oflags, ...)
 	int dev = get_dev_type(filename);
 
 	/* /dev/null is always allowed, others only if O_SPECIAL is set */
-	if (dev != NOT_DEVICE && (dev == DEV_NULL || special)) {
+	if (dev == DEV_NULL || (special && dev != NOT_DEVICE)) {
 		filename = "nul";
 		oflags = O_RDWR;
 	}
@@ -224,7 +216,7 @@ int mingw_xopen(const char *pathname, int flags)
 #undef fopen
 FILE *mingw_fopen (const char *filename, const char *otype)
 {
-	if (filename && !strcmp(filename, "/dev/null"))
+	if (get_dev_type(filename) == DEV_NULL)
 		filename = "nul";
 	return fopen(filename, otype);
 }
@@ -418,7 +410,6 @@ static uid_t file_owner(HANDLE fh)
 	PSECURITY_DESCRIPTOR pSD;
 	static PTOKEN_USER user = NULL;
 	static int initialised = 0;
-	int equal;
 	uid_t uid = 0;
 	DWORD *ptr;
 	unsigned char prefix[] = {
@@ -453,18 +444,16 @@ static uid_t file_owner(HANDLE fh)
 			&pSidOwner, NULL, NULL, NULL, &pSD) != ERROR_SUCCESS)
 		return 0;
 
-	equal = EqualSid(pSidOwner, user->User.Sid);
-	LocalFree(pSD);
-
-	if (equal)
-		return DEFAULT_UID;
-
-	/* for local or domain users use the RID as uid */
-	if (memcmp(pSidOwner, prefix, sizeof(prefix)) == 0) {
+	if (EqualSid(pSidOwner, user->User.Sid)) {
+		uid = DEFAULT_UID;
+	}
+	else if (memcmp(pSidOwner, prefix, sizeof(prefix)) == 0) {
+		/* for local or domain users use the RID as uid */
 		ptr = (DWORD *)pSidOwner;
 		if (ptr[6] >= 500 && ptr[6] < DEFAULT_UID)
 			uid = (uid_t)ptr[6];
 	}
+	LocalFree(pSD);
 	return uid;
 
 #if 0
@@ -794,8 +783,7 @@ char *mingw_getcwd(char *pointer, int len)
 	char *ret = getcwd(pointer, len);
 	if (!ret)
 		return ret;
-	bs_to_slash(ret);
-	return ret;
+	return bs_to_slash(ret);
 }
 
 #undef rename
@@ -849,9 +837,7 @@ static char *gethomedir(void)
 
 	GetUserProfileDirectory(h, buf, &len);
 	CloseHandle(h);
-	bs_to_slash(buf);
-
-	return buf;
+	return bs_to_slash(buf);
 }
 
 #define NAME_LEN 100
@@ -1112,8 +1098,7 @@ char *realpath(const char *path, char *resolved_path)
 
 	if (_fullpath(buffer, path, MAX_PATH) &&
 			(real_path=resolve_symlinks(buffer))) {
-		strcpy(resolved_path, real_path);
-		bs_to_slash(resolved_path);
+		bs_to_slash(strcpy(resolved_path, real_path));
 		p = last_char_is(resolved_path, '/');
 		if (p && p > resolved_path && p[-1] != ':')
 			*p = '\0';
@@ -1380,7 +1365,7 @@ size_t mingw_strftime(char *buf, size_t max, const char *format, const struct tm
 				m = t - fmt;
 				newfmt = xasprintf("%s%s%s", fmt, replace, t+2);
 				free(fmt);
-				t = newfmt + m + strlen(replace);
+				t = newfmt + m + strlen(replace) - 1;
 				fmt = newfmt;
 			}
 		}
@@ -1390,12 +1375,6 @@ size_t mingw_strftime(char *buf, size_t max, const char *format, const struct tm
 	free(fmt);
 
 	return ret;
-}
-
-int stime(time_t *t UNUSED_PARAM)
-{
-	errno = EPERM;
-	return -1;
 }
 
 #undef access
@@ -1505,13 +1484,16 @@ char *alloc_win32_extension(const char *p)
 	return NULL;
 }
 
-void FAST_FUNC bs_to_slash(char *p)
+char * FAST_FUNC bs_to_slash(char *str)
 {
-	for (; *p; ++p) {
+	char *p;
+
+	for (p=str; *p; ++p) {
 		if ( *p == '\\' ) {
 			*p = '/';
 		}
 	}
+	return str;
 }
 
 void FAST_FUNC slash_to_bs(char *p)
@@ -1732,8 +1714,7 @@ char *get_drive_cwd(const char *path, char *buffer, int size)
 	ret = GetFullPathName(drive, size, buffer, NULL);
 	if (ret == 0 || ret > size)
 		return NULL;
-	bs_to_slash(buffer);
-	return buffer;
+	return bs_to_slash(buffer);
 }
 
 void fix_path_case(char *path)

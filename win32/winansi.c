@@ -21,38 +21,36 @@
 #undef read
 #undef getc
 
-static HANDLE console = INVALID_HANDLE_VALUE;
-static HANDLE console_in = INVALID_HANDLE_VALUE;
-static WORD plain_attr;
-static WORD attr;
-static int negative;
+#define FOREGROUND_ALL (FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_BLUE)
+#define BACKGROUND_ALL (BACKGROUND_RED | BACKGROUND_GREEN | BACKGROUND_BLUE)
 
-static void init(void)
+static WORD plain_attr = 0;
+
+static HANDLE get_console(void)
+{
+	return GetStdHandle(STD_OUTPUT_HANDLE);
+}
+
+static WORD get_console_attr(void)
 {
 	CONSOLE_SCREEN_BUFFER_INFO sbi;
 
-	if (console != INVALID_HANDLE_VALUE || console_in != INVALID_HANDLE_VALUE)
-		return;
+	if (GetConsoleScreenBufferInfo(get_console(), &sbi))
+		return sbi.wAttributes;
 
-	console = GetStdHandle(STD_OUTPUT_HANDLE);
-	console_in = GetStdHandle(STD_INPUT_HANDLE);
-
-	if (GetConsoleScreenBufferInfo(console, &sbi)) {
-		attr = plain_attr = sbi.wAttributes;
-		negative = 0;
-	}
+	return FOREGROUND_ALL;
 }
 
 static int is_console(int fd)
 {
-	init();
-	return isatty(fd) && console != INVALID_HANDLE_VALUE;
+	if (!plain_attr)
+		plain_attr = get_console_attr();
+	return isatty(fd) && get_console() != INVALID_HANDLE_VALUE;
 }
 
 static int is_console_in(int fd)
 {
-	init();
-	return isatty(fd) && console_in != INVALID_HANDLE_VALUE;
+	return isatty(fd) && GetStdHandle(STD_INPUT_HANDLE) != INVALID_HANDLE_VALUE;
 }
 
 static int skip_ansi_emulation(void)
@@ -87,25 +85,17 @@ static HANDLE dup_handle(HANDLE h)
 static void use_alt_buffer(int flag)
 {
 	static HANDLE console_orig = INVALID_HANDLE_VALUE;
-	static int initialised = FALSE;
-	CONSOLE_SCREEN_BUFFER_INFO sbi;
-	HANDLE h;
-
-	init();
-
-	if (console == INVALID_HANDLE_VALUE)
-		return;
-
-	if (!initialised) {
-		console_orig = dup_handle(console);
-		initialised = TRUE;
-	}
-
-	if (console_orig == INVALID_HANDLE_VALUE)
-		return;
+	HANDLE console, h;
 
 	if (flag) {
 		SECURITY_ATTRIBUTES sa;
+		CONSOLE_SCREEN_BUFFER_INFO sbi;
+
+		if (console_orig != INVALID_HANDLE_VALUE)
+			return;
+
+		console = get_console();
+		console_orig = dup_handle(console);
 
 		// handle should be inheritable
 		memset(&sa, 0, sizeof(sa));
@@ -124,8 +114,12 @@ static void use_alt_buffer(int flag)
 			SetConsoleScreenBufferSize(h, sbi.dwSize);
 	}
 	else {
+		if (console_orig == INVALID_HANDLE_VALUE)
+			return;
+
 		// revert to original buffer
 		h = dup_handle(console_orig);
+		console_orig = INVALID_HANDLE_VALUE;
 		if (h == INVALID_HANDLE_VALUE)
 			return;
 	}
@@ -136,30 +130,28 @@ static void use_alt_buffer(int flag)
 	_open_osfhandle((intptr_t)console, O_RDWR|O_BINARY);
 }
 
-#define FOREGROUND_ALL (FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_BLUE)
-#define BACKGROUND_ALL (BACKGROUND_RED | BACKGROUND_GREEN | BACKGROUND_BLUE)
-
-static void set_console_attr(void)
+static void set_console_attr(WORD attributes, int invert)
 {
-	WORD attributes = attr;
-	if (negative) {
+	HANDLE console = get_console();
+	if (invert) {
+		WORD save = attributes;
 		attributes &= ~FOREGROUND_ALL;
 		attributes &= ~BACKGROUND_ALL;
 
 		/* This could probably use a bitmask
 		   instead of a series of ifs */
-		if (attr & FOREGROUND_RED)
+		if (save & FOREGROUND_RED)
 			attributes |= BACKGROUND_RED;
-		if (attr & FOREGROUND_GREEN)
+		if (save & FOREGROUND_GREEN)
 			attributes |= BACKGROUND_GREEN;
-		if (attr & FOREGROUND_BLUE)
+		if (save & FOREGROUND_BLUE)
 			attributes |= BACKGROUND_BLUE;
 
-		if (attr & BACKGROUND_RED)
+		if (save & BACKGROUND_RED)
 			attributes |= FOREGROUND_RED;
-		if (attr & BACKGROUND_GREEN)
+		if (save & BACKGROUND_GREEN)
 			attributes |= FOREGROUND_GREEN;
-		if (attr & BACKGROUND_BLUE)
+		if (save & BACKGROUND_BLUE)
 			attributes |= FOREGROUND_BLUE;
 	}
 	SetConsoleTextAttribute(console, attributes);
@@ -167,6 +159,7 @@ static void set_console_attr(void)
 
 static void clear_buffer(DWORD len, COORD pos)
 {
+	HANDLE console = get_console();
 	DWORD dummy;
 
 	FillConsoleOutputCharacterA(console, ' ', len, pos, &dummy);
@@ -175,6 +168,7 @@ static void clear_buffer(DWORD len, COORD pos)
 
 static void erase_in_line(void)
 {
+	HANDLE console = get_console();
 	CONSOLE_SCREEN_BUFFER_INFO sbi;
 
 	if (!GetConsoleScreenBufferInfo(console, &sbi))
@@ -184,6 +178,7 @@ static void erase_in_line(void)
 
 static void erase_till_end_of_screen(void)
 {
+	HANDLE console = get_console();
 	CONSOLE_SCREEN_BUFFER_INFO sbi;
 	DWORD len;
 
@@ -196,6 +191,7 @@ static void erase_till_end_of_screen(void)
 
 void reset_screen(void)
 {
+	HANDLE console = get_console();
 	CONSOLE_SCREEN_BUFFER_INFO sbi;
 	COORD pos = { 0, 0 };
 
@@ -208,6 +204,7 @@ void reset_screen(void)
 
 void move_cursor_row(int n)
 {
+	HANDLE console = get_console();
 	CONSOLE_SCREEN_BUFFER_INFO sbi;
 
 	if(!GetConsoleScreenBufferInfo(console, &sbi))
@@ -218,6 +215,7 @@ void move_cursor_row(int n)
 
 static void move_cursor_column(int n)
 {
+	HANDLE console = get_console();
 	CONSOLE_SCREEN_BUFFER_INFO sbi;
 
 	if (!GetConsoleScreenBufferInfo(console, &sbi))
@@ -228,6 +226,7 @@ static void move_cursor_column(int n)
 
 static void move_cursor(int x, int y)
 {
+	HANDLE console = get_console();
 	COORD pos;
 	CONSOLE_SCREEN_BUFFER_INFO sbi;
 
@@ -246,6 +245,9 @@ static char *process_escape(char *pos)
 	const char *str, *func;
 	char *bel;
 	size_t len;
+	WORD attr = get_console_attr();
+	int invert = FALSE;
+	static int inverse = 0;
 
 	switch (pos[1]) {
 	case '[':
@@ -275,7 +277,7 @@ static char *process_escape(char *pos)
 			switch (val) {
 			case 0: /* reset */
 				attr = plain_attr;
-				negative = 0;
+				inverse = 0;
 				break;
 			case 1: /* bold */
 				attr |= FOREGROUND_INTENSITY;
@@ -305,11 +307,13 @@ static char *process_escape(char *pos)
 			case 25: /* no blink */
 				attr &= ~BACKGROUND_INTENSITY;
 				break;
-			case 7:  /* negative */
-				negative = 1;
+			case 7:  /* inverse on */
+				invert = !inverse;
+				inverse = 1;
 				break;
-			case 27: /* positive */
-				negative = 0;
+			case 27: /* inverse off */
+				invert = inverse;
+				inverse = 0;
 				break;
 			case 8:  /* conceal */
 			case 28: /* reveal */
@@ -398,7 +402,7 @@ static char *process_escape(char *pos)
 			str++;
 		} while (*(str-1) == ';');
 
-		set_console_attr();
+		set_console_attr(attr, invert);
 		break;
 	case 'A': /* up */
 		move_cursor_row(-strtol(str, (char **)&str, 10));

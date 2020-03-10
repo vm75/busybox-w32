@@ -319,7 +319,7 @@ void lbb_prepare(const char *applet
 		IF_FEATURE_INDIVIDUAL(, char **argv))
 {
 #ifdef __GLIBC__
-	(*(int **)&bb_errno) = __errno_location();
+	(*(int **)not_const_pp(&bb_errno)) = __errno_location();
 	barrier();
 #endif
 	applet_name = applet;
@@ -885,7 +885,7 @@ int busybox_main(int argc UNUSED_PARAM, char **argv)
 		}
 #endif
 		full_write2_str(
-			"BusyBox is copyrighted by many authors between 1998-2019.\n"
+			"BusyBox is copyrighted by many authors between 1998-2020.\n"
 			"Licensed under GPLv2. See source distribution for detailed\n"
 			"copyright notices.\n"
 			"\n"

@@ -1867,10 +1867,19 @@ unsigned size_from_HISTFILESIZE(const char *hp) FAST_FUNC;
 # else
 #  define MAX_HISTORY 0
 # endif
+typedef const char *get_exe_name_t(int i) FAST_FUNC;
 typedef struct line_input_t {
 	int flags;
 	int timeout;
 	const char *path_lookup;
+# if ENABLE_FEATURE_TAB_COMPLETION \
+&& (ENABLE_ASH  || ENABLE_SH_IS_ASH  || ENABLE_BASH_IS_ASH \
+||  ENABLE_HUSH || ENABLE_SH_IS_HUSH || ENABLE_BASH_IS_HUSH \
+)
+	/* function to fetch additional application-specific names to match */
+	get_exe_name_t *get_exe_name;
+#  define EDITING_HAS_get_exe_name 1
+# endif
 # if MAX_HISTORY
 	int cnt_history;
 	int cur_history;
@@ -1915,6 +1924,10 @@ void save_history(line_input_t *st);
 int read_line_input(const char* prompt, char* command, int maxsize) FAST_FUNC;
 #define read_line_input(state, prompt, command, maxsize) \
 	read_line_input(prompt, command, maxsize)
+#endif
+
+#ifndef EDITING_HAS_get_exe_name
+# define EDITING_HAS_get_exe_name 0
 #endif
 
 
@@ -2197,9 +2210,11 @@ extern const char bb_busybox_exec_path[] ALIGN1;
 #if !ENABLE_PLATFORM_MINGW32
 #define BB_PATH_ROOT_PATH "PATH=/sbin:/usr/sbin:/bin:/usr/bin" BB_ADDITIONAL_PATH
 #define PATH_SEP ':'
+#define PATH_SEP_STR ":"
 #else
 #define BB_PATH_ROOT_PATH "PATH=/sbin;/usr/sbin;/bin;/usr/bin" BB_ADDITIONAL_PATH
 #define PATH_SEP ';'
+#define PATH_SEP_STR ";"
 #endif
 extern const char bb_PATH_root_path[] ALIGN1; /* BB_PATH_ROOT_PATH */
 #define bb_default_root_path (bb_PATH_root_path + sizeof("PATH"))
@@ -2218,12 +2233,32 @@ struct globals;
  * Magic prevents ptr_to_globals from going into rodata.
  * If you want to assign a value, use SET_PTR_TO_GLOBALS(x) */
 extern struct globals *const ptr_to_globals;
+
+#if defined(__clang_major__) && __clang_major__ >= 9
+/* Clang/llvm drops assignment to "constant" storage. Silently.
+ * Needs serious convincing to not eliminate the store.
+ */
+static ALWAYS_INLINE void* not_const_pp(const void *p)
+{
+	void *pp;
+	__asm__ __volatile__(
+		"# forget that p points to const"
+		: /*outputs*/ "=r" (pp)
+		: /*inputs*/ "0" (p)
+	);
+	return pp;
+}
+#else
+static ALWAYS_INLINE void* not_const_pp(const void *p) { return (void*)p; }
+#endif
+
 /* At least gcc 3.4.6 on mipsel system needs optimization barrier */
 #define barrier() __asm__ __volatile__("":::"memory")
 #define SET_PTR_TO_GLOBALS(x) do { \
-	(*(struct globals**)&ptr_to_globals) = (void*)(x); \
+	(*(struct globals**)not_const_pp(&ptr_to_globals)) = (void*)(x); \
 	barrier(); \
 } while (0)
+
 #define FREE_PTR_TO_GLOBALS() do { \
 	if (ENABLE_FEATURE_CLEAN_UP) { \
 		free(ptr_to_globals); \

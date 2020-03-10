@@ -33,10 +33,9 @@
 //config:	Enable option (-I) to output an ISO-8601 compliant
 //config:	date/time string.
 //config:
-//config:# defaults to "no": stat's nanosecond field is a bit non-portable
 //config:config FEATURE_DATE_NANO
 //config:	bool "Support %[num]N nanosecond format specifier"
-//config:	default n  # syscall(__NR_clock_gettime)
+//config:	default n # stat's nanosecond field is a bit non-portable
 //config:	depends on DATE
 //config:	select PLATFORM_LINUX
 //config:	help
@@ -99,11 +98,15 @@
 //usage:#define date_full_usage "\n\n"
 //usage:       "Display time (using +FMT), or set time\n"
 //usage:	IF_NOT_LONG_OPTS(
+//usage:	 IF_NOT_PLATFORM_MINGW32(
 //usage:     "\n	[-s] TIME	Set time to TIME"
+//usage:     )
 //usage:     "\n	-u		Work in UTC (don't convert to local time)"
 //usage:     "\n	-R		Output RFC-2822 compliant date string"
 //usage:	) IF_LONG_OPTS(
+//usage:	 IF_NOT_PLATFORM_MINGW32(
 //usage:     "\n	[-s,--set] TIME	Set time to TIME"
+//usage:     )
 //usage:     "\n	-u,--utc	Work in UTC (don't convert to local time)"
 //usage:     "\n	-R,--rfc-2822	Output RFC-2822 compliant date string"
 //usage:	)
@@ -145,19 +148,30 @@
 
 enum {
 	OPT_RFC2822   = (1 << 0), /* R */
+#if !ENABLE_PLATFORM_MINGW32
 	OPT_SET       = (1 << 1), /* s */
 	OPT_UTC       = (1 << 2), /* u */
 	OPT_DATE      = (1 << 3), /* d */
 	OPT_REFERENCE = (1 << 4), /* r */
 	OPT_TIMESPEC  = (1 << 5) * ENABLE_FEATURE_DATE_ISOFMT, /* I */
 	OPT_HINT      = (1 << 6) * ENABLE_FEATURE_DATE_ISOFMT, /* D */
+#else
+	OPT_SET       = (0),      /* s */
+	OPT_UTC       = (1 << 1), /* u */
+	OPT_DATE      = (1 << 2), /* d */
+	OPT_REFERENCE = (1 << 3), /* r */
+	OPT_TIMESPEC  = (1 << 4) * ENABLE_FEATURE_DATE_ISOFMT, /* I */
+	OPT_HINT      = (1 << 5) * ENABLE_FEATURE_DATE_ISOFMT, /* D */
+#endif
 };
 
 #if ENABLE_LONG_OPTS
 static const char date_longopts[] ALIGN1 =
 		"rfc-822\0"   No_argument       "R"
 		"rfc-2822\0"  No_argument       "R"
+#if !ENABLE_PLATFORM_MINGW32
 		"set\0"       Required_argument "s"
+#endif
 		"utc\0"       No_argument       "u"
 	/*	"universal\0" No_argument       "u" */
 		"date\0"      Required_argument "d"
@@ -193,13 +207,25 @@ int date_main(int argc UNUSED_PARAM, char **argv)
 	char *isofmt_arg = NULL;
 
 	opt = getopt32long(argv, "^"
+#if !ENABLE_PLATFORM_MINGW32
 			"Rs:ud:r:"
+#else
+			"Rud:r:"
+#endif
 			IF_FEATURE_DATE_ISOFMT("I::D:")
+#if !ENABLE_PLATFORM_MINGW32
 			"\0"
 			"d--s:s--d"
 			IF_FEATURE_DATE_ISOFMT(":R--I:I--R"),
+#else
+			IF_FEATURE_DATE_ISOFMT("\0R--I:I--R"),
+#endif
 			date_longopts,
+#if !ENABLE_PLATFORM_MINGW32
 			&date_str, &date_str, &filename
+#else
+			&date_str, &filename
+#endif
 			IF_FEATURE_DATE_ISOFMT(, &isofmt_arg, &fmt_str2dt)
 	);
 	argv += optind;
@@ -272,13 +298,14 @@ int date_main(int argc UNUSED_PARAM, char **argv)
 #endif
 	} else {
 #if ENABLE_FEATURE_DATE_NANO
-		/* libc has incredibly messy way of doing this,
-		 * typically requiring -lrt. We just skip all this mess */
-		syscall(__NR_clock_gettime, CLOCK_REALTIME, &ts);
+		clock_gettime(CLOCK_REALTIME, &ts);
 #else
 		time(&ts.tv_sec);
 #endif
 	}
+#if !ENABLE_FEATURE_DATE_NANO
+	ts.tv_nsec = 0;
+#endif
 	localtime_r(&ts.tv_sec, &tm_time);
 
 	/* If date string is given, update tm_time, and maybe set date */
@@ -301,9 +328,10 @@ int date_main(int argc UNUSED_PARAM, char **argv)
 		if (date_str[0] != '@')
 			tm_time.tm_isdst = -1;
 		ts.tv_sec = validate_tm_time(date_str, &tm_time);
+		ts.tv_nsec = 0;
 
 		/* if setting time, set it */
-		if ((opt & OPT_SET) && stime(&ts.tv_sec) < 0) {
+		if ((opt & OPT_SET) && clock_settime(CLOCK_REALTIME, &ts) < 0) {
 			bb_simple_perror_msg("can't set date");
 		}
 	}
