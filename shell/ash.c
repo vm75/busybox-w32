@@ -14866,8 +14866,7 @@ init(void)
 				/* Convert backslashes to forward slashes in value but
 				 * not if we're on Windows XP or for variables known to
 				 * cause problems */
-				if ( !winxp && strncmp(*envp, "SYSTEMROOT=", 11) != 0 &&
-						strncmp(*envp, "COMSPEC=", 8) != 0 ) {
+				if ( !winxp && strncmp(*envp, "PATH=", 11) == 0 ) {
 					bs_to_slash(end+1);
 				}
 
