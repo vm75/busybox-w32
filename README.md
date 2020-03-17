@@ -1,5 +1,5 @@
 ### Status
-This is a fork of [rmyorston/busybox-w32](https://github.com/rmyorston/busybox-w32)
+This is a fork of [rmyorston/busybox-w32](https://github.com/rmyorston/busybox-w32).
 There are some customizations, which will be documented below.
 Attempts will be made to keep this up-to-date with upstream changes.
 
